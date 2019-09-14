@@ -48,26 +48,43 @@ int main(int argc, char *argv[])
     meshElements.emplace_back(std::array<int, 3>{0, 5, 1});
     meshElements.emplace_back(std::array<int, 3>{2, 6, 3});
     meshElements.emplace_back(std::array<int, 3>{3, 6, 7});
-    meshElements.emplace_back(std::array<int, 3>{1, 7, 3});
-    meshElements.emplace_back(std::array<int, 3>{1, 5, 7});
-    meshElements.emplace_back(std::array<int, 3>{0, 2, 4});
-    meshElements.emplace_back(std::array<int, 3>{2, 6, 4});
+    // meshElements.emplace_back(std::array<int, 3>{1, 7, 3});
+    // meshElements.emplace_back(std::array<int, 3>{1, 5, 7});
+    // meshElements.emplace_back(std::array<int, 3>{0, 2, 4});
+    // meshElements.emplace_back(std::array<int, 3>{2, 6, 4});
    
     // Usd currently requires an extent, somewhat unfortunately.
+    const int nFrames = 20;
     GfRange3f extent;
     for (const auto& pt : usdPoints) {
         extent.UnionWith(pt);
     }
     VtVec3fArray extentArray(2);
     extentArray[0] = extent.GetMin();
-    extentArray[1] = extent.GetMax();
+    extentArray[1] = extent.GetMax() + GfVec3f(0.1, 0.02, 0.01) * (float) nFrames;
 
         
     // Create a mesh for this surface
     UsdGeomMesh mesh = UsdGeomMesh::Define(stage, SdfPath("/TriangulatedSurface"));
 
+    // set up the timecode
+    stage->SetStartTimeCode(0.);
+    stage->SetEndTimeCode((double) nFrames);
+
     // Populate the mesh vertex data
-    mesh.GetPointsAttr().Set(usdPoints);
+    UsdAttribute pointsAttribute = mesh.GetPointsAttr();
+    pointsAttribute.SetVariability(SdfVariabilityVarying);
+
+    std::vector<double> timeSamples;
+    timeSamples.push_back(0.);
+    for(int frame = 1; frame <= nFrames; frame++)
+        timeSamples.push_back((double)frame);
+    for(const auto sample: timeSamples){
+        pointsAttribute.Set(usdPoints,sample);
+        for(auto& vertex: objVerts)
+            vertex += GfVec3f(0.1, 0.01, 0.02);
+        usdPoints.assign(objVerts.begin(), objVerts.end());
+    }
 
     VtIntArray faceVertexCounts, faceVertexIndices;
     for (const auto& element : meshElements) {
