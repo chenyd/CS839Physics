@@ -1,6 +1,6 @@
 #pragma once
 
-#include "AnimatedMesh.h"
+#include "AnimatedTetrahedronMesh.h"
 
 #include "CGVectorWrapper.h"
 #include "CGSystemWrapper.h"
@@ -8,17 +8,17 @@
 
 #include <Eigen/Dense>
 
-//#define USE_LINEAR_ELASTICITY
-#define USE_ST_VENANT_KIRCHHOFF
+#define USE_LINEAR_ELASTICITY
+//#define USE_ST_VENANT_KIRCHHOFF
 
 template<class T>
-struct FiniteElementMesh : public AnimatedMesh<T, 3>
+struct FiniteElementMesh : public AnimatedTetrahedonMesh<T>
 {
-    using Base = AnimatedMesh<T, 3>;
+    using Base = AnimatedTetrahedonMesh<T>;
     using Base::m_meshElements;
     using Base::m_particleX;
-    using Vector2 = typename Base::Vector2;
-    using Matrix22 = Eigen::Matrix< T , 2 , 2>;
+    using Vector3 = typename Base::Vector3;
+    using Matrix33 = Eigen::Matrix< T , 3 , 3>;
 
     int m_nFrames;
     int m_subSteps;
@@ -32,7 +32,7 @@ struct FiniteElementMesh : public AnimatedMesh<T, 3>
     const T m_rayleighCoefficient;
 
     std::vector<T> m_particleMass;
-    std::vector<Matrix22> m_DmInverse;
+    std::vector<Matrix33> m_DmInverse;
     std::vector<T> m_restVolume;
     
     FiniteElementMesh(const T density, const T mu, const T lambda, const T rayleighCoefficient)
@@ -45,85 +45,85 @@ struct FiniteElementMesh : public AnimatedMesh<T, 3>
         m_particleMass.resize(m_particleX.size(), T()); // Initialize all particle masses to zero
         for(const auto& element: m_meshElements)
         {
-            Matrix22 Dm;
-            for(int j = 0; j < 2; j++)
+            Matrix33 Dm;
+            for(int j = 0; j < 3; j++)
                 Dm.col(j) = m_particleX[element[j+1]]-m_particleX[element[0]];
-            T restVolume = .5 * Dm.determinant();
+            T restVolume = Dm.determinant() / 6.;
             if(restVolume < 0)
                 throw std::logic_error("Inverted element");
             m_DmInverse.emplace_back(Dm.inverse());
             m_restVolume.push_back(restVolume);
             T elementMass = m_density * restVolume;
             for(const int v: element)
-                m_particleMass[v] += (1./3.) * elementMass;
+                m_particleMass[v] += (1./4.) * elementMass;
         }
     }
     
-    void addElasticForce(std::vector<Vector2>& f) const
+    void addElasticForce(std::vector<Vector3>& f) const
     {
         for(int e = 0; e < m_meshElements.size(); e++)
         {
             const auto& element = m_meshElements[e];
 
             // Compute deformation gradient
-            Matrix22 Ds;
-            for(int j = 0; j < 2; j++)
+            Matrix33 Ds;
+            for(int j = 0; j < 3; j++)
                 Ds.col(j) = m_particleX[element[j+1]]-m_particleX[element[0]];
-            Matrix22 F = Ds * m_DmInverse[e];
+            Matrix33 F = Ds * m_DmInverse[e];
 
 #ifdef USE_LINEAR_ELASTICITY
-            Matrix22 strain = .5 * (F + F.transpose()) - Matrix22::Identity();
-            Matrix22 P = 2. * m_mu * strain + m_lambda * strain.trace() * Matrix22::Identity();
+            Matrix33 strain = .5 * (F + F.transpose()) - Matrix33::Identity();
+            Matrix33 P = 2. * m_mu * strain + m_lambda * strain.trace() * Matrix33::Identity();
 #endif
 
 #ifdef USE_ST_VENANT_KIRCHHOFF
-            Matrix22 E = .5 * ( F.transpose() * F - Matrix22::Identity());
-            Matrix22 P = F * (2. * m_mu * E + m_lambda * E.trace() * Matrix22::Identity());
+            Matrix33 E = .5 * ( F.transpose() * F - Matrix33::Identity());
+            Matrix33 P = F * (2. * m_mu * E + m_lambda * E.trace() * Matrix33::Identity());
 #endif
             
-            Matrix22 H = -m_restVolume[e] * P * m_DmInverse[e].transpose();
+            Matrix33 H = -m_restVolume[e] * P * m_DmInverse[e].transpose();
             
-            for(int j = 0; j < 2; j++){
+            for(int j = 0; j < 3; j++){
                 f[element[j+1]] += H.col(j);
                 f[element[0]] -= H.col(j);
             }
         }
     }
 
-    void addProductWithStiffnessMatrix(std::vector<Vector2>& dx, std::vector<Vector2>& df, const T scale) const
+    void addProductWithStiffnessMatrix(std::vector<Vector3>& dx, std::vector<Vector3>& df, const T scale) const
     {
         for(int e = 0; e < m_meshElements.size(); e++)
         {
             const auto& element = m_meshElements[e];
 
             // Compute deformation gradient
-            Matrix22 Ds;
-            for(int j = 0; j < 2; j++)
+            Matrix33 Ds;
+            for(int j = 0; j < 3; j++)
                 Ds.col(j) = m_particleX[element[j+1]]-m_particleX[element[0]];
-            Matrix22 F = Ds * m_DmInverse[e];
+            Matrix33 F = Ds * m_DmInverse[e];
 
             // Compute differential(s)
-            Matrix22 dDs;
-            for(int j = 0; j < 2; j++)
+            Matrix33 dDs;
+            for(int j = 0; j < 3; j++)
                 dDs.col(j) = dx[element[j+1]]-dx[element[0]];
-            Matrix22 dF = dDs * m_DmInverse[e];
+            Matrix33 dF = dDs * m_DmInverse[e];
 
 #ifdef USE_LINEAR_ELASTICITY
-            Matrix22 dstrain = .5 * (dF + dF.transpose());
-            Matrix22 dP = scale * (2. * m_mu * dstrain + m_lambda * dstrain.trace() * Matrix22::Identity());
+            Matrix33 dstrain = .5 * (dF + dF.transpose());
+            Matrix33 dP = scale * (2. * m_mu * dstrain + m_lambda * dstrain.trace() * Matrix33::Identity());
 #endif
 
 #ifdef USE_ST_VENANT_KIRCHHOFF
-            Matrix22 E = .5 * ( F.transpose() * F - Matrix22::Identity());
-            Matrix22 dE = .5 * ( dF.transpose() * F + F.transpose() * dF);
-            Matrix22 dP = dF * (2. * m_mu *  E + m_lambda *  E.trace() * Matrix22::Identity()) +
-                           F * (2. * m_mu * dE + m_lambda * dE.trace() * Matrix22::Identity());
+            Matrix33 E = .5 * ( F.transpose() * F - Matrix33::Identity());
+            Matrix33 dE = .5 * ( dF.transpose() * F + F.transpose() * dF);
+            Matrix33 dP = dF * (2. * m_mu *  E + m_lambda *  E.trace() * Matrix33::Identity()) +
+                           F * (2. * m_mu * dE + m_lambda * dE.trace() * Matrix33::Identity());
 
 #endif
             
-            Matrix22 dH = m_restVolume[e] * dP * m_DmInverse[e].transpose();
+            Matrix33 dH = m_restVolume[e] * dP * m_DmInverse[e].transpose();
             
-            for(int j = 0; j < 2; j++){
+            for(int j = 0; j < 3; j++){
                 df[element[j+1]] += dH.col(j);
                 df[element[0]] -= dH.col(j);
             }
@@ -145,17 +145,17 @@ struct FiniteElementMesh : public AnimatedMesh<T, 3>
         
         // Solve for everything else using Conjugate Gradients
 
-        std::vector<Vector2> dx(nParticles, Vector2::Zero());
-        std::vector<Vector2> rhs(nParticles, Vector2::Zero());
-        std::vector<Vector2> q(nParticles, Vector2::Zero());
-        std::vector<Vector2> s(nParticles, Vector2::Zero());
-        std::vector<Vector2> r(nParticles, Vector2::Zero());
-        CGVectorWrapper<Vector2> dxWrapper(dx);
-        CGVectorWrapper<Vector2> rhsWrapper(rhs);
-        CGVectorWrapper<Vector2> qWrapper(q);
-        CGVectorWrapper<Vector2> sWrapper(s);
-        CGVectorWrapper<Vector2> rWrapper(r);
-        CGSystemWrapper<Vector2, FEMType> systemWrapper(*this);
+        std::vector<Vector3> dx(nParticles, Vector3::Zero());
+        std::vector<Vector3> rhs(nParticles, Vector3::Zero());
+        std::vector<Vector3> q(nParticles, Vector3::Zero());
+        std::vector<Vector3> s(nParticles, Vector3::Zero());
+        std::vector<Vector3> r(nParticles, Vector3::Zero());
+        CGVectorWrapper<Vector3> dxWrapper(dx);
+        CGVectorWrapper<Vector3> rhsWrapper(rhs);
+        CGVectorWrapper<Vector3> qWrapper(q);
+        CGVectorWrapper<Vector3> sWrapper(s);
+        CGVectorWrapper<Vector3> rWrapper(r);
+        CGSystemWrapper<Vector3, FEMType> systemWrapper(*this);
         
         addElasticForce(rhs);
         clearConstrainedParticles(rhs);
@@ -180,7 +180,7 @@ struct FiniteElementMesh : public AnimatedMesh<T, 3>
         }
     }
 
-    virtual void clearConstrainedParticles(std::vector<Vector2>& x) {}
+    virtual void clearConstrainedParticles(std::vector<Vector3>& x) {}
     virtual void setBoundaryConditions() {}
 };
 
